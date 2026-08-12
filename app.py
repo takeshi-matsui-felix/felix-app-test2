@@ -801,7 +801,7 @@ def main():
                                     cat_keys = list(cat_dict.keys())
                                     sel_cat = st.radio("分類を変更", cat_keys, horizontal=True, key=f"ecat_{rec_id}") if cat_keys else None
                                     
-                                   if sel_cat:
+                                    if sel_cat:
                                         detail_items = cat_dict.get(sel_cat, [])
                                         if not isinstance(detail_items, list): detail_items = []
                                         temp_list = detail_items + ["その他（フリー項目）"]
@@ -970,7 +970,6 @@ def main():
                                 st.rerun()
                             else:
                                 st.error(f"一部のデータの送信に失敗しました（{err_count}件エラー）。電波の良い場所でもう一度「終了する」ボタンを押してください。")
-
 # ----------------------------------------
     # メニュー: 3. 検査内容確認（管理者）
     # ----------------------------------------
