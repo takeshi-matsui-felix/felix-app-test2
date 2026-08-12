@@ -248,12 +248,21 @@ def main():
                     with st.expander(f"【{r.get('floor_level')} {r.get('area')}】 {r.get('issue_detail')}"):
                         new_f = st.radio("階", FLOOR_OPTS[1:], horizontal=True, key=f"f_{r['record_id']}")
                         new_a = st.radio("部", AREA_OPTS_SHANAI[1:] if c_type in SHANAI_KENSA_TYPES else AREA_OPTS_STANDARD[1:], horizontal=True, key=f"a_{r['record_id']}")
-                        new_d = st.text_area("詳細", value=r.get('issue_detail'), key=f"d_{r['record_id']}")
+                        
+                        cat_dict = ISSUE_TEMPLATES.get(c_type, {}) if c_type in ["配筋検査", "躯体検査", "断熱検査", "中間検査"] else ISSUE_TEMPLATES.get("社内検査(設計)", {}).get(new_a, {}) if c_type in SHANAI_KENSA_TYPES else {}
+                        if not isinstance(cat_dict, dict): cat_dict = {}
+                        cat_keys = list(cat_dict.keys())
+                        sel_cat = st.radio("分類を変更", cat_keys, horizontal=True, key=f"ecat_{r['record_id']}") if cat_keys else None
+                        sel_temp = st.radio("よくある指摘事項", list(cat_dict.get(sel_cat, {}).keys()) + ["その他（フリー項目）"], key=f"etemp_{r['record_id']}", horizontal=True) if sel_cat else None
+                        
+                        new_d = st.text_area("詳細", value=r.get('issue_detail').split("：", 1)[-1] if "：" in r.get('issue_detail') else r.get('issue_detail'), key=f"d_{r['record_id']}")
                         new_w = st.radio("工種", edit_w_opts[1:], horizontal=True, key=f"w_{r['record_id']}")
-                        np = _smart_camera(propName=c_name, inspType=c_type, inspDate=str(datetime.date.today()), locationText=f"{new_f} {new_a}", issueDetail=new_d, mode="insp", key=f"c_{r['record_id']}")
+                        
+                        final_desc = (sel_temp + "：" + new_d.strip() if new_d.strip() else sel_temp) if sel_temp and sel_temp != "その他（フリー項目）" else new_d.strip()
+                        np = _smart_camera(propName=c_name, inspType=c_type, inspDate=str(datetime.date.today()), locationText=f"{new_f} {new_a}", issueDetail=final_desc, mode="insp", key=f"c_{r['record_id']}")
                         cy, cn = st.columns(2)
                         if cy.button("上書き", key=f"sy_{r['record_id']}", type="primary"):
-                            up_data = {"floor_level": new_f, "area": new_a, "work_type": new_w, "issue_detail": new_d, "line_notified": True}
+                            up_data = {"floor_level": new_f, "area": new_a, "work_type": new_w, "issue_detail": final_desc, "line_notified": True}
                             if np: url = upload_to_storage(np); up_data["issue_photo_url"] = url if url else np
                             db_patch("inspection_records", r['record_id'], up_data); st.rerun()
                         if cn.button("削除", key=f"sn_{r['record_id']}"): db_delete_record(r['record_id']); st.rerun()
@@ -261,15 +270,53 @@ def main():
                 prev_f = st.session_state.prev_floor; prev_a = st.session_state.prev_area
                 w_opts = WORK_OPTS_KIKAN if c_type.startswith("【検査機関】") else WORK_OPTS_SHANAI if c_type in SHANAI_KENSA_TYPES else WORK_OPTS_STANDARD
                 a_opts = AREA_OPTS_SHANAI if c_type in SHANAI_KENSA_TYPES else AREA_OPTS_STANDARD
-                f = st.radio("階", FLOOR_OPTS[1:], horizontal=True) if not c_type.startswith("【検査機関】") else "一式"
-                a = st.radio("部", a_opts[1:], horizontal=True) if not c_type.startswith("【検査機関】") else "全体"
-                desc = st.text_area("詳細")
-                w = st.radio("工種", w_opts[1:], horizontal=True)
-                cam = _smart_camera(propName=c_name, inspType=c_type, inspDate=str(datetime.date.today()), locationText=f"{f} {a}", issueDetail=desc, mode="insp", key="cam_new")
+                
+                if c_type.startswith("【検査機関】"):
+                    f = "一式"; a = "全体"
+                    sel_cat = None; sel_temp = None; default_w = ""
+                    st.markdown("##### 詳細・場所の追記（自由入力）")
+                    desc = st.text_area("詳細情報を入力", label_visibility="collapsed")
+                    disp_w_opts = w_opts
+                    w_idx = 0
+                else:
+                    f_idx = FLOOR_OPTS[1:].index(prev_f) if prev_f in FLOOR_OPTS[1:] else 0
+                    f = st.radio("階層を選択", FLOOR_OPTS[1:], index=f_idx, horizontal=True)
+                    a_idx = a_opts[1:].index(prev_a) if prev_a in a_opts[1:] else 0
+                    a = st.radio("部位を選択", a_opts[1:], index=a_idx, horizontal=True)
+                    
+                    cat_dict = ISSUE_TEMPLATES.get(c_type, {}) if c_type in ["配筋検査", "躯体検査", "断熱検査", "中間検査"] else ISSUE_TEMPLATES.get("社内検査(設計)", {}).get(a, {}) if c_type in SHANAI_KENSA_TYPES else {}
+                    if not isinstance(cat_dict, dict): cat_dict = {}
+                    cat_keys = list(cat_dict.keys())
+                    sel_cat = st.radio("分類を選択", cat_keys, horizontal=True) if cat_keys else None
+                    
+                    if sel_cat:
+                        detail_dict = cat_dict.get(sel_cat, {})
+                        temp_list = list(detail_dict.keys()) + ["その他（フリー項目）"]
+                        sel_temp = st.radio("よくある指摘事項", temp_list, horizontal=True)
+                        default_w = detail_dict.get(sel_temp, "") if sel_temp != "その他（フリー項目）" else ""
+                    else: sel_temp = None
+                        
+                    st.markdown("##### 詳細・場所の追記（自由入力）")
+                    desc = st.text_area("詳細情報を入力", label_visibility="collapsed")
+                    
+                    disp_w_opts = w_opts[1:]
+                    w_idx = disp_w_opts.index(default_w) if default_w in disp_w_opts else 0
+
+                w = st.radio("工種を選択", disp_w_opts, index=w_idx, horizontal=True)
+                
+                if sel_temp == "その他（フリー項目）": final_desc = desc.strip()
+                else: final_desc = (sel_temp + ("：" + desc.strip() if desc.strip() != "" else "")) if sel_temp else desc.strip()
+                
+                loc_parts = [str(f), str(a)]
+                if not c_type.startswith("【検査機関】") and sel_cat: loc_parts.append(str(sel_cat))
+                loc_str = " ".join(loc_parts).strip()
+                disp_desc = final_desc[:80] + "..." if len(final_desc) > 80 else final_desc
+
+                cam = _smart_camera(propName=c_name, inspType=c_type, inspDate=str(datetime.date.today()), locationText=loc_str, issueDetail=disp_desc, mode="insp", key="cam_new")
                 if cam: st.session_state.temp_photo = cam
                 if st.button("一時保存", type="primary"):
-                    if w and desc and st.session_state.temp_photo:
-                        st.session_state.pending_records.append({"temp_id": str(uuid.uuid4()), "floor_level": f, "area": a, "work_type": w, "issue_detail": desc, "photo_b64": st.session_state.temp_photo})
+                    if w and final_desc and st.session_state.temp_photo:
+                        st.session_state.pending_records.append({"temp_id": str(uuid.uuid4()), "floor_level": f, "area": a, "work_type": w, "issue_detail": final_desc, "photo_b64": st.session_state.temp_photo})
                         st.session_state.issue_saved = True; st.session_state.temp_photo = None; st.session_state.prev_floor = f; st.session_state.prev_area = a; st.rerun()
                     else: st.error("全て必須です")
             else:
@@ -321,15 +368,12 @@ def main():
             if st.button("⬅ 戻る"): st.session_state.drill_target = None; st.session_state.cached_records = None; st.rerun()
             t_ids = [str(i.get('inspection_id')) for i in ins.values() if i.get('property_name') == prop_val and i.get('inspection_type') == type_val]
             
-            # 物件変更機能
             with st.expander("🔄 この検査の物件を変更する（間違えて登録した場合）"):
                 p_opts = [p for p in props.values() if p.get('property_name') != prop_val]
                 if p_opts:
                     new_p = st.selectbox("正しい物件", p_opts, format_func=lambda x: f"[{x.get('area')}] {x.get('property_name')}")
                     if st.button("移動", type="primary"):
-                        success = True
                         for iid in t_ids:
-                            if not db_patch_inspection(iid, {"property_id": new_p['property_id'], "property_name": new_p['property_name']}) or not db_patch("inspection_records", iid, {"property_id": new_p['property_id']}): success = False # Quick patch wrapper issue here, manual fix below
                             requests.patch(f"{SUPABASE_URL}/rest/v1/inspections?inspection_id=eq.{iid}", headers=HEADERS, json={"property_id": new_p['property_id'], "property_name": new_p['property_name']})
                             requests.patch(f"{SUPABASE_URL}/rest/v1/inspection_records?inspection_id=eq.{iid}", headers=HEADERS, json={"property_id": new_p['property_id']})
                         clear_specific_cache("inspections"); clear_specific_cache("inspection_records"); st.success("移動完了"); st.session_state.drill_target=None; time.sleep(1); st.rerun()
@@ -346,7 +390,7 @@ def main():
                         if c_ok.button("承認", key=f"ok_{r['record_id']}"): db_patch("inspection_records", r['record_id'], {"progress_status": "是正待ち", "issue_detail": new_d}); st.rerun()
                         if c_del.button("削除", key=f"del_{r['record_id']}"): db_delete_record(r['record_id']); st.rerun()
 
-    # 4-A. 是正実施（協力業者専用）＆ 4-B. ダッシュボード（管理者用）
+    # 4-A. 是正実施 ＆ 4-B. ダッシュボード
     elif st.session_state.active_menu in ["是正実施（協力業者）", "是正ダッシュボード（管理者用）"]:
         is_admin = (st.session_state.active_menu == "是正ダッシュボード（管理者用）")
         st.header("是正ダッシュボード（確認・実施）" if is_admin else "是正実施")
@@ -397,12 +441,13 @@ def main():
             if is_admin:
                 with st.expander("🔄 物件を変更する（間違えて登録した場合）"):
                     p_opts = [p for p in props.values() if p.get('property_name') != prop_val]
-                    new_p = st.selectbox("正しい物件", p_opts, format_func=lambda x: f"[{x.get('area')}] {x.get('property_name')}")
-                    if st.button("移動", type="primary"):
-                        for iid in t_ids:
-                            requests.patch(f"{SUPABASE_URL}/rest/v1/inspections?inspection_id=eq.{iid}", headers=HEADERS, json={"property_id": new_p['property_id'], "property_name": new_p['property_name']})
-                            requests.patch(f"{SUPABASE_URL}/rest/v1/inspection_records?inspection_id=eq.{iid}", headers=HEADERS, json={"property_id": new_p['property_id']})
-                        clear_specific_cache("inspections"); clear_specific_cache("inspection_records"); st.success("移動完了"); st.session_state.drill_target=None; time.sleep(1); st.rerun()
+                    if p_opts:
+                        new_p = st.selectbox("正しい物件", p_opts, format_func=lambda x: f"[{x.get('area')}] {x.get('property_name')}")
+                        if st.button("移動", type="primary"):
+                            for iid in t_ids:
+                                requests.patch(f"{SUPABASE_URL}/rest/v1/inspections?inspection_id=eq.{iid}", headers=HEADERS, json={"property_id": new_p['property_id'], "property_name": new_p['property_name']})
+                                requests.patch(f"{SUPABASE_URL}/rest/v1/inspection_records?inspection_id=eq.{iid}", headers=HEADERS, json={"property_id": new_p['property_id']})
+                            clear_specific_cache("inspections"); clear_specific_cache("inspection_records"); st.success("移動完了"); st.session_state.drill_target=None; time.sleep(1); st.rerun()
             
             recs_detail = sort_records(db_get("inspection_records", f"inspection_id=in.({','.join(t_ids)})" + ("&progress_status=in.(是正待ち,是正確認中)" if is_admin else "&progress_status=eq.是正待ち")))
             
