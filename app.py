@@ -508,10 +508,45 @@ def main():
     if selected_menu != st.session_state.active_menu:
         jump_to_menu(selected_menu, st.session_state.pre_selected_prop)
 
-    # ----------------------------------------
+   # ----------------------------------------
     # メニュー: 0. ホーム
     # ----------------------------------------
     if st.session_state.active_menu == "ホーム":
+        
+        # ===== 安全検証ツール（ここから） =====
+        if st.session_state.role == "admin":
+            st.markdown("---")
+            st.subheader("🔍 迷子写真の検証（Dry Run）")
+            if st.button("1. 迷子写真を炙り出す（※ここでは削除されません）"):
+                with st.spinner("照合中..."):
+                    valid_recs = db_get("inspection_records", "select=issue_photo_url,fix_photo_url")
+                    valid_filenames = set()
+                    for r in valid_recs:
+                        if r.get('issue_photo_url'): valid_filenames.add(r['issue_photo_url'].split('/')[-1])
+                        if r.get('fix_photo_url'): valid_filenames.add(r['fix_photo_url'].split('/')[-1])
+                    orphans = []
+                    for offset in range(0, 10000, 1000):
+                        res = requests.post(f"{SUPABASE_URL}/storage/v1/object/list/photos", headers=HEADERS, json={"prefix": "", "limit": 1000, "offset": offset})
+                        if res.status_code != 200: break
+                        files = res.json()
+                        if not files: break
+                        for f in files:
+                            fname = f.get('name')
+                            if fname and fname != ".emptyFolderPlaceholder" and fname not in valid_filenames:
+                                orphans.append(fname)
+                    st.session_state.orphans = orphans
+                    st.success(f"炙り出し完了： {len(orphans)} 件の迷子写真が見つかりました。")
+
+            if st.session_state.get("orphans"):
+                st.write("▼ 迷子写真のリスト（最初の10件のみ表示）")
+                st.write(st.session_state.orphans[:10])
+                if st.button("2. 🧪 テスト：リストの一番上の1枚だけを削除してみる"):
+                    test_target = st.session_state.orphans[0]
+                    requests.delete(f"{SUPABASE_URL}/storage/v1/object/photos/{test_target}", headers=HEADERS)
+                    st.success(f"ファイル「 {test_target} 」を削除しました。")
+            st.markdown("---")
+        # ===== 安全検証ツール（ここまで） =====
+
         if not st.session_state.splash_done:
             st.markdown("""
             <style>
