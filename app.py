@@ -1356,34 +1356,54 @@ def main():
                         "Authorization": f"Bearer {master_key}",
                         "Content-Type": "application/json"
                     }
-                    with st.spinner("通信中..."):
-                        res_db = requests.get(f"{SUPABASE_URL}/rest/v1/inspection_records?select=issue_photo_url,fix_photo_url", headers=admin_headers)
-                        if res_db.status_code != 200:
-                            st.error(f"【DB通信エラー】コード: {res_db.status_code}")
-                        else:
-                            valid_filenames = set()
+                    with st.spinner("データベースと保管庫を全件照合中..."):
+                        # 1. DB側の写真を上限なし（全件ループ）で取得
+                        valid_filenames = set()
+                        for offset in range(0, 100000, 1000):
+                            url = f"{SUPABASE_URL}/rest/v1/inspection_records?select=issue_photo_url,fix_photo_url&limit=1000&offset={offset}"
+                            res_db = requests.get(url, headers=admin_headers)
+                            if res_db.status_code != 200 or not res_db.json(): break
+                            
                             for r in res_db.json():
                                 if r.get('issue_photo_url'): valid_filenames.add(r['issue_photo_url'].split('/')[-1])
                                 if r.get('fix_photo_url'): valid_filenames.add(r['fix_photo_url'].split('/')[-1])
+                        
+                        # 2. Storage側の写真を全件ループで取得し照合
+                        orphans = []
+                        total_storage_files = 0
+                        for offset in range(0, 100000, 1000):
+                            res = requests.post(f"{SUPABASE_URL}/storage/v1/object/list/photos", headers=admin_headers, json={"prefix": "", "limit": 1000, "offset": offset})
+                            if res.status_code != 200 or not res.json(): break
                             
-                            orphans = []
-                            for offset in range(0, 10000, 1000):
-                                res = requests.post(f"{SUPABASE_URL}/storage/v1/object/list/photos", headers=admin_headers, json={"prefix": "", "limit": 1000, "offset": offset})
-                                if res.status_code != 200 or not res.json(): break
-                                for f in res.json():
-                                    fname = f.get('name')
-                                    if fname and fname != ".emptyFolderPlaceholder" and fname not in valid_filenames:
+                            for f in res.json():
+                                fname = f.get('name')
+                                if fname and fname != ".emptyFolderPlaceholder":
+                                    total_storage_files += 1
+                                    if fname not in valid_filenames:
                                         orphans.append(fname)
-                            
-                            st.session_state.orphans = orphans
-                            st.session_state.master_key = master_key
-                            st.success(f"炙り出し完了： {len(orphans)} 件の迷子写真が見つかりました。")
+                        
+                        st.session_state.orphans = orphans
+                        st.session_state.master_key = master_key
+                        st.session_state.valid_count = len(valid_filenames)
+                        st.session_state.total_storage = total_storage_files
+                        
+                        st.success("照合が完了しました！以下の内訳をご確認ください。")
 
-            if st.session_state.get("orphans"):
-                st.write(f"▼ 検出された迷子写真（全 {len(st.session_state.orphans)} 件中、先頭10件をプレビュー表示）")
-                st.info("※画像をクリックすると別タブで拡大表示されます。すでに削除した写真であることを目視でご確認ください。")
+            if st.session_state.get("orphans") is not None:
+                st.markdown(f"""
+                <div style='background-color:#f8f9fa; padding:15px; border-radius:8px; border:2px solid #ddd; margin-bottom:20px;'>
+                    <h3 style='margin-top:0;'>📊 データ照合結果（枚数確認）</h3>
+                    <ul style='font-size:16px;'>
+                        <li>📁 <b>保管庫（Storage）の全写真:</b> {st.session_state.total_storage} 枚</li>
+                        <li>🛡️ <b>現在DBで使われている安全な写真:</b> {st.session_state.valid_count} 枚</li>
+                        <li style='color:#d93025;'>🗑️ <b>どこにも紐づかない迷子写真（削除対象）:</b> {len(st.session_state.orphans)} 枚</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
                 
-                # 検出された写真を5列で10枚プレビュー表示する処理
+                st.write(f"▼ 検出された迷子写真（先頭10件をプレビュー表示）")
+                st.info("※画像をクリックすると別タブで拡大表示されます。")
+                
                 preview_count = min(10, len(st.session_state.orphans))
                 cols = st.columns(5)
                 for i in range(preview_count):
@@ -1391,7 +1411,6 @@ def main():
                     img_url = f"{SUPABASE_URL}/storage/v1/object/public/photos/{fname}"
                     with cols[i % 5]:
                         st.markdown(f'<a href="{img_url}" target="_blank"><img src="{img_url}" style="width:100%; object-fit:cover; aspect-ratio:1/1; border-radius:5px; border:1px solid #ddd; margin-bottom:5px;"></a>', unsafe_allow_html=True)
-                        st.caption(f"{fname[:6]}...")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1404,19 +1423,18 @@ def main():
                         st.success(f"1枚削除完了: {test_target}")
                         st.session_state.orphans.pop(0)
                         st.rerun()
-                    else:
-                        st.error("削除エラー")
-
-                if col2.button(f"🔥 全 {len(st.session_state.orphans)} 件のゴミ写真を一括全削除する", type="primary"):
-                    admin_headers = {"apikey": st.session_state.master_key, "Authorization": f"Bearer {st.session_state.master_key}"}
-                    with st.spinner(f"全 {len(st.session_state.orphans)} 件を削除中..."):
-                        count = 0
-                        for target in st.session_state.orphans:
-                            requests.delete(f"{SUPABASE_URL}/storage/v1/object/photos/{target}", headers=admin_headers)
-                            count += 1
-                        st.success(f"🎉 お掃除完了！ 合計 {count} 件のゴミ写真を一括削除しました！")
-                        st.session_state.orphans = None
-                        st.rerun()
+                    
+                if len(st.session_state.orphans) > 0:
+                    if col2.button(f"🔥 残り {len(st.session_state.orphans)} 件のゴミ写真を一括全削除する", type="primary"):
+                        admin_headers = {"apikey": st.session_state.master_key, "Authorization": f"Bearer {st.session_state.master_key}"}
+                        with st.spinner(f"全 {len(st.session_state.orphans)} 件を削除中... 数分かかります。画面を閉じないでください。"):
+                            count = 0
+                            for target in st.session_state.orphans:
+                                requests.delete(f"{SUPABASE_URL}/storage/v1/object/photos/{target}", headers=admin_headers)
+                                count += 1
+                            st.success(f"🎉 お掃除完了！ 合計 {count} 件のゴミ写真を一括削除しました！")
+                            st.session_state.orphans = []
+                            st.rerun()
 if __name__ == "__main__":
     try:
         main()
