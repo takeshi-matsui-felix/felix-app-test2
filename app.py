@@ -494,7 +494,7 @@ def main():
         return m
 
     if st.session_state.role == "admin":
-        menu_opts = ["ホーム", "物件登録（管理者）", "検査実施（管理者）", "検査内容確認（管理者）", "是正ダッシュボード（管理者用）", "完了分一覧（共通）"]
+        menu_opts = ["ホーム", "物件登録（管理者）", "検査実施（管理者）", "検査内容確認（管理者）", "是正ダッシュボード（管理者用）", "完了分一覧（共通）", "安全検証ツール"]
     else:
         menu_opts = ["ホーム", "是正実施（協力業者）", "完了分一覧（共通）"]
         
@@ -1338,7 +1338,73 @@ def main():
                         time.sleep(1)
                         st.rerun()
                 issue_count += 1
+# ----------------------------------------
+    # メニュー: 99. 安全検証ツール
+    # ----------------------------------------
+    elif st.session_state.active_menu == "安全検証ツール":
+        if st.session_state.role == "admin":
+            st.header("🔍 迷子写真の検証（エラー詳細表示版）")
+            
+            master_key = st.text_input("Supabaseの『service_role（secret）』を入力", type="password")
+            
+            if st.button("1. 迷子写真を炙り出す"):
+                if not master_key:
+                    st.error("マスターキーを入力してください。")
+                else:
+                    admin_headers = {
+                        "apikey": master_key,
+                        "Authorization": f"Bearer {master_key}",
+                        "Content-Type": "application/json"
+                    }
+                    with st.spinner("通信中...エラー原因を探ります"):
+                        res_db = requests.get(f"{SUPABASE_URL}/rest/v1/inspection_records?select=issue_photo_url,fix_photo_url", headers=admin_headers)
+                        
+                        if res_db.status_code != 200:
+                            st.error(f"【DB通信エラー】コード: {res_db.status_code} 内容: {res_db.text}")
+                        else:
+                            valid_filenames = set()
+                            for r in res_db.json():
+                                if r.get('issue_photo_url'): valid_filenames.add(r['issue_photo_url'].split('/')[-1])
+                                if r.get('fix_photo_url'): valid_filenames.add(r['fix_photo_url'].split('/')[-1])
+                            
+                            orphans = []
+                            has_error = False
+                            for offset in range(0, 10000, 1000):
+                                res = requests.post(f"{SUPABASE_URL}/storage/v1/object/list/photos", headers=admin_headers, json={"prefix": "", "limit": 1000, "offset": offset})
+                                
+                                if res.status_code != 200:
+                                    st.error(f"【Storage通信エラー】コード: {res.status_code} 内容: {res.text}")
+                                    has_error = True
+                                    break
+                                
+                                files = res.json()
+                                if not files: break
+                                
+                                for f in files:
+                                    fname = f.get('name')
+                                    if fname and fname != ".emptyFolderPlaceholder" and fname not in valid_filenames:
+                                        orphans.append(fname)
+                            
+                            if not has_error:
+                                st.session_state.orphans = orphans
+                                st.session_state.master_key = master_key
+                                st.success(f"炙り出し完了： {len(orphans)} 件の迷子写真が見つかりました。")
 
+            if st.session_state.get("orphans"):
+                st.write("▼ 迷子写真のリスト（最初の10件のみ表示）")
+                st.write(st.session_state.orphans[:10])
+                if st.button("2. 🧪 テスト：リストの一番上の1枚だけを削除してみる"):
+                    test_target = st.session_state.orphans[0]
+                    admin_headers = {
+                        "apikey": st.session_state.master_key,
+                        "Authorization": f"Bearer {st.session_state.master_key}",
+                        "Content-Type": "application/json"
+                    }
+                    del_res = requests.delete(f"{SUPABASE_URL}/storage/v1/object/photos/{test_target}", headers=admin_headers)
+                    if del_res.status_code == 200:
+                        st.success(f"ファイル「 {test_target} 」を削除しました。")
+                    else:
+                        st.error(f"【削除エラー】コード: {del_res.status_code} 内容: {del_res.text}")
 if __name__ == "__main__":
     try:
         main()
