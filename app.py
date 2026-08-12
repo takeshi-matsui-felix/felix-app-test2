@@ -801,11 +801,12 @@ def main():
                                     cat_keys = list(cat_dict.keys())
                                     sel_cat = st.radio("分類を変更", cat_keys, horizontal=True, key=f"ecat_{rec_id}") if cat_keys else None
                                     
-                                    if sel_cat:
-                                        detail_dict = cat_dict.get(sel_cat, {})
-                                        temp_list = list(detail_dict.keys()) + ["その他（フリー項目）"]
+                                   if sel_cat:
+                                        detail_items = cat_dict.get(sel_cat, [])
+                                        if not isinstance(detail_items, list): detail_items = []
+                                        temp_list = detail_items + ["その他（フリー項目）"]
                                         sel_temp = st.radio("よくある指摘事項", temp_list, key=f"etemp_{rec_id}", horizontal=True)
-                                        default_w = detail_dict.get(sel_temp, "") if sel_temp != "その他（フリー項目）" else ""
+                                        default_w = ""
                                 
                                 edit_desc_val = detail.split(":", 1)[1] if ":" in detail else detail.split("：", 1)[1] if "：" in detail else detail
                                 st.markdown("##### 詳細・場所の追記を変更")
