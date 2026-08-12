@@ -13,7 +13,45 @@ import time
 
 # 外部辞書ファイルの読み込み
 from new_dictionary import ISSUE_TEMPLATES
+# ===== 安全検証用：迷子写真の炙り出しとテスト =====
+        if st.session_state.role == "admin":
+            st.markdown("---")
+            st.subheader("🔍 迷子写真の検証（Dry Run）")
+            
+            if st.button("1. 迷子写真を炙り出す（※ここでは削除されません）"):
+                with st.spinner("照合中..."):
+                    # DBの有効な写真リストを取得
+                    valid_recs = db_get("inspection_records", "select=issue_photo_url,fix_photo_url")
+                    valid_filenames = set()
+                    for r in valid_recs:
+                        if r.get('issue_photo_url'): valid_filenames.add(r['issue_photo_url'].split('/')[-1])
+                        if r.get('fix_photo_url'): valid_filenames.add(r['fix_photo_url'].split('/')[-1])
+                    
+                    # Storageから全ファイルを取得して比較
+                    orphans = []
+                    for offset in range(0, 10000, 1000):
+                        res = requests.post(f"{SUPABASE_URL}/storage/v1/object/list/photos", headers=HEADERS, json={"prefix": "", "limit": 1000, "offset": offset})
+                        if res.status_code != 200: break
+                        files = res.json()
+                        if not files: break
+                        for f in files:
+                            fname = f.get('name')
+                            if fname and fname != ".emptyFolderPlaceholder" and fname not in valid_filenames:
+                                orphans.append(fname)
+                    
+                    st.session_state.orphans = orphans
+                    st.success(f"炙り出し完了： {len(orphans)} 件の迷子写真が見つかりました。")
 
+            if st.session_state.get("orphans"):
+                st.write("▼ 迷子写真のリスト（最初の10件のみ表示）")
+                st.write(st.session_state.orphans[:10])
+                
+                if st.button("2. 🧪 テスト：リストの一番上の1枚だけを削除してみる"):
+                    test_target = st.session_state.orphans[0]
+                    requests.delete(f"{SUPABASE_URL}/storage/v1/object/photos/{test_target}", headers=HEADERS)
+                    st.success(f"ファイル「 {test_target} 」を削除しました。")
+                    st.info("Supabaseの管理画面（Storage）を開き、このファイルが消えているか、他の大事な画像に影響が出ていないかをご確認ください。")
+        # ===== ここまで =====
 # ==========================================
 # 1. Supabase 接続設定 ＆ キャッシュ機構（AM3:00クリア対応）
 # ==========================================
